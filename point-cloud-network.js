@@ -50,7 +50,9 @@
 
   const FIELDS = {
     showUI:{key:'showUI', type:'checkbox', value:false, attr:'controls'},
-    showHud:{key:'showHud', type:'checkbox', value:false, attr:'hud'}
+    showHud:{key:'showHud', type:'checkbox', value:false, attr:'hud'},
+    // 0 = draw on every display refresh.
+    maxFps:{key:'maxFps', type:'range', min:0, max:240, step:1, value:0}
   };
   for (const s of SECTIONS) for (const f of s.fields) FIELDS[f.key] = f;
 
@@ -101,12 +103,19 @@
     let boundaryPixels = [];
 
     let W=0,H=0,DPR=1;
+    // Size the mask/SDF was built at. Lags behind W/H while a resize settles.
+    let MW=0,MH=0;
+    let maskRebuildTimer=0;
     let nodes=[];
     let interiorSamples=[];
     let lastTime=performance.now();
 
     const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
     const rand=(a,b)=>a+Math.random()*(b-a);
+
+    const ALPHA_LEVELS=16;
+    const MAX_SIM_STEP=.033;
+    const RESIZE_SETTLE_MS=150;
 
     function hexToRgb(hex){
       hex=hex.replace('#','');
@@ -123,19 +132,22 @@
       canvas.width=Math.round(W*DPR);
       canvas.height=Math.round(H*DPR);
       ctx.setTransform(DPR,0,0,DPR,0,0);
-
-      maskCanvas.width=W||1;
-      maskCanvas.height=H||1;
       if(!W||!H) return;
 
       for(const n of nodes){
         n.x=clamp(n.x,n.r,W-n.r);
         n.y=clamp(n.y,n.r,H-n.r);
       }
-      generateShapeMask();
 
-      // Nodes created before the element had a size are all piled in a corner.
-      if(first) scatter();
+      if(first){
+        generateShapeMask();
+        // Nodes created before the element had a size are all piled in a corner.
+        scatter();
+      } else {
+        // Rebuilding the shape is expensive; wait for a drag-resize to finish.
+        clearTimeout(maskRebuildTimer);
+        maskRebuildTimer=setTimeout(generateShapeMask,RESIZE_SETTLE_MS);
+      }
     }
 
     function randomVelocity(speed){
@@ -323,6 +335,7 @@
     }
 
     function generateShapeMask(){
+      clearTimeout(maskRebuildTimer);
       interiorSamples=[];
       const mode=cfg.shapeMode;
 
@@ -333,6 +346,9 @@
         return;
       }
 
+      MW=W; MH=H;
+      maskCanvas.width=W;
+      maskCanvas.height=H;
       clearMask();
       drawShapeToMask(mode);
       maskData=maskCtx.getImageData(0,0,W,H);
@@ -432,16 +448,16 @@
 
     function sampleSignedDistance(x,y){
       if(!signedDistance) return 1e6;
-      x=clamp(x,0,W-1); y=clamp(y,0,H-1);
+      x=clamp(x,0,MW-1); y=clamp(y,0,MH-1);
 
       const x0=Math.floor(x), y0=Math.floor(y);
-      const x1=Math.min(W-1,x0+1), y1=Math.min(H-1,y0+1);
+      const x1=Math.min(MW-1,x0+1), y1=Math.min(MH-1,y0+1);
       const tx=x-x0, ty=y-y0;
 
-      const a=signedDistance[y0*W+x0];
-      const b=signedDistance[y0*W+x1];
-      const c=signedDistance[y1*W+x0];
-      const d=signedDistance[y1*W+x1];
+      const a=signedDistance[y0*MW+x0];
+      const b=signedDistance[y0*MW+x1];
+      const c=signedDistance[y1*MW+x0];
+      const d=signedDistance[y1*MW+x1];
 
       const ab=a+(b-a)*tx;
       const cd=c+(d-c)*tx;
@@ -618,6 +634,11 @@
       ctx.lineCap='round';
       ctx.lineWidth=cfg.lineWidth;
 
+      // Stroking each line separately costs one draw call per pair (tens of
+      // thousands at high counts). Instead, quantize the fade into a few
+      // opacity levels and stroke one path per level.
+      const paths=Array.from({length:ALPHA_LEVELS},()=>new Path2D());
+
       for(let i=0;i<nodes.length;i++){
         const a=nodes[i];
 
@@ -641,16 +662,18 @@
           const t=clamp(d/maxD,0,1);
           const fade=Math.pow(1-t,1.35);
 
-          // Close points = stronger/darker connection.
-          // Far points = progressively fainter.
-          const alpha=farAlpha+(nearAlpha-farAlpha)*fade;
-
-          ctx.strokeStyle=`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
-          ctx.beginPath();
-          ctx.moveTo(a.x,a.y);
-          ctx.lineTo(b.x,b.y);
-          ctx.stroke();
+          const level=Math.round(fade*(ALPHA_LEVELS-1));
+          paths[level].moveTo(a.x,a.y);
+          paths[level].lineTo(b.x,b.y);
         }
+      }
+
+      for(let level=0;level<ALPHA_LEVELS;level++){
+        // Close points = stronger/darker connection.
+        // Far points = progressively fainter.
+        const alpha=farAlpha+(nearAlpha-farAlpha)*level/(ALPHA_LEVELS-1);
+        ctx.strokeStyle=`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
+        ctx.stroke(paths[level]);
       }
     }
 
@@ -688,9 +711,17 @@
 
     function tick(now){
       if(!W||!H){ lastTime=now; return; }
-      const dt=Math.min((now-lastTime)/1000,.033);
+      // With a frame-rate cap, frames can be further apart than one stable
+      // physics step; split the elapsed time into substeps. The cap on total
+      // elapsed time avoids a jump after the tab or element was paused.
+      const maxElapsed=Math.max(.1,cfg.maxFps ? 1.5/cfg.maxFps : 0);
+      let dt=Math.min((now-lastTime)/1000,maxElapsed);
       lastTime=now;
-      update(dt);
+      while(dt>0){
+        const step=Math.min(dt,MAX_SIM_STEP);
+        update(step);
+        dt-=step;
+      }
       draw(now);
     }
 
@@ -1064,6 +1095,7 @@
       const run = this.isConnected && this._visible;
       if(run && !this._raf){
         this._engine.resetClock();
+        this._lastDraw = 0;
         this._raf = requestAnimationFrame(this._frame);
       } else if(!run && this._raf){
         cancelAnimationFrame(this._raf);
@@ -1073,6 +1105,16 @@
 
     _frame(now){
       this._raf = requestAnimationFrame(this._frame);
+
+      const maxFps = this._cfg.maxFps;
+      if(maxFps){
+        const interval = 1000/maxFps;
+        const elapsed = now - this._lastDraw;
+        // 1ms tolerance absorbs rAF timestamp jitter (e.g. 60 on a 120Hz display).
+        if(elapsed < interval-1) return;
+        this._lastDraw = elapsed >= interval ? now - (elapsed % interval) : now;
+      }
+
       this._engine.tick(now);
       if(this._cfg.showHud){
         const mode = this._cfg.shapeMode;

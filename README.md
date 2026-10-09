@@ -43,6 +43,7 @@ Unknown keys are ignored, and numbers are clamped to the same ranges as the pane
 | `fgColor` / `bgColor` | `#30b178` / `#05090c` | |
 | `showUI` | false | Settings panel (attribute: `controls`) |
 | `showHud` | false | Point count readout (attribute: `hud`) |
+| `maxFps` | 0 | Frame-rate cap, e.g. 30 for a quiet background; 0 = every display refresh. Motion speed is unaffected. |
 
 ### Methods and events
 
