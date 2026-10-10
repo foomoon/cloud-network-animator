@@ -53,3 +53,33 @@ Unknown keys are ignored, and numbers are clamped to the same ranges as the pane
 - A `configchange` event fires whenever the settings change, with the new config in `event.detail`.
 
 The animation pauses while the element is offscreen or removed from the page.
+
+## Macros
+
+[`macros.js`](macros.js) is an optional add-on with small scripts ("macros") that animate a `<point-cloud-network>` using only its public `setConfig`/`getConfig`. Pick one from the **Macro** menu in the demo, or link straight to it with `?macro=<name>`, e.g. [`?macro=clock`](https://foomoon.github.io/cloud-network-animator/?macro=clock). Press `h` for a clean full-screen view.
+
+```html
+<script src="https://foomoon.github.io/cloud-network-animator/macros.js"></script>
+<script>
+  const clock = PointCloudMacros.clock(document.querySelector('point-cloud-network'), {hour12: false});
+  // later: clock.stop();  // restores the settings the macro changed
+</script>
+```
+
+| Name | What it does | Options (defaults) |
+| --- | --- | --- |
+| `clock` | Current time as `h:mm` | `hour12` (true) |
+| `words` | Cycles through words | `words`, `intervalMs` (4000) |
+| `countdown` | Counts down to a time, then shows `endText` | `to` (5 min from start), `endText` ("NOW") |
+| `liveNumber` | Shows a fetched value, refreshed periodically | `source` (this repo's GitHub stars), `format`, `intervalMs` (60000) |
+| `typewriter` | Reveals text one letter at a time | `text`, `charMs` (300), `holdMs` (2500), `loop` (true) |
+| `shapeTour` | Cycles through shapes | `shapes`, `intervalMs` (6000) |
+| `colorDrift` | Rotates the color around the hue wheel | `periodMs` (30000), `saturation`, `lightness` |
+| `breathe` | Gently pulses node size and line opacity | `periodMs` (4000), `depth` (0.35) |
+| `heartbeat` | Heart shape with a lub-dub pulse | `bpm` (66), `depth` (0.7) |
+| `dayNight` | Colors and speed follow the time of day | `dayMs` (0 = real time; the demo uses 60000) |
+| `explode` | Click the background or press Space to blast the points out; they reform | `outMs` (700), `boost` (2.4), `key` (" ") |
+| `scroll` | Page scroll (or the mouse wheel when the page can't scroll) steps through shapes and grows the point count | `stages`, `minCount` (40), `maxCount` (220) |
+| `audio` | Microphone level drives node size and line reach | `sensitivity` (1) |
+
+The text macros and `shapeTour` drop the point count to the minimum and ramp it back up on every change. New points stream in from everywhere and spread evenly over the new shape. They accept `count` (200), `minCount` (30), `holdMs` (350) and `riseMs` (1200).
